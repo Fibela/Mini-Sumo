@@ -1,0 +1,11 @@
+Lista de materiales Sujeto a cambios
+
+1° Arduino Nano
+2° LLantas de silicon(Fabricación propia)
+3°  Puente H
+4° Jumpers (indefinido)
+5° Sensores IR (x1)
+6° Batería LiPo 2S 850 mAh (x1) ó Bateria energizer (x1)
+7° Sensor de línea QRE1113 analógico (x4)
+8° Motor D20 (x4)
+9°  Cuña
