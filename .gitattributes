@@ -1,0 +1,10 @@
+# Archivos de diseño y documentos: binarios, sin conversión de fin de línea
+*.pdf    binary
+*.SLDPRT binary
+*.SLDASM binary
+*.SLDDRW binary
+*.stl    binary
+*.3mf    binary
+*.gcode  binary
+*.png    binary
+*.jpg    binary
