@@ -14,7 +14,8 @@
 #define DRIVER_L298N  2
 #define PUENTE_H      DRIVER_L298N   // confirmado: L298N
 
-// Motores: los 2 motores D20 de cada lado van EN PARALELO a un canal.
+// Motores (Rev B, tracción trasera): 1 motor N20 por lado en el eje trasero.
+// Si se usan 2 motores por lado, van EN PARALELO al mismo canal.
 // Lado izquierdo  -> canal A del puente H
 #define PIN_IZQ_PWM   25
 #define PIN_IZQ_IN1   26
@@ -44,23 +45,47 @@
 #define PIN_LINEA_TRA_IZQ  34   // trasero izquierdo
 #define PIN_LINEA_TRA_DER  35   // trasero derecho
 
-// QRE1113: más reflejo (blanco) => voltaje MÁS BAJO.
+// LINEA_DIGITAL false : sensores analógicos (QRE1113 analógico)
+// LINEA_DIGITAL true  : módulos digitales (TCRT5000, QRE1113 digital...)
+#define LINEA_DIGITAL      false
+
+// QRE1113 y la mayoría de módulos: más reflejo (blanco) => voltaje MÁS BAJO.
 #define BLANCO_ES_BAJO     true
+
+// Lecturas seguidas de "blanco" necesarias para creerlas (filtra destellos
+// del IR/láser del rival). 2 lecturas ≈ 3–4 ms de retraso.
+#define CONFIRMA_LINEA     2
 
 // Umbral por defecto (0-4095). Se reemplaza al calibrar (opción 8 "Calibrar linea")
 // y queda guardado en la memoria del ESP32.
 #define UMBRAL_LINEA_DEFECTO 1500
 
 // ---------------------------------------------------------------------
-//  Sensor IR de oponente (x1, al frente)
-//  IR_ANALOGICO true  : tipo Sharp GP2Y0A21 (más cerca = más voltaje)
-//  IR_ANALOGICO false : sensor digital (JS40F, E18-D80NK, etc.)
-//  Si el sensor da 5 V en su salida, usar divisor de voltaje a 3.3 V.
+//  Sensor de oponente (x1, al frente) - elegir UNO
+//  SENSOR_SHARP   : Sharp GP2Y0A21 analógico en GPIO32 (más cerca = más voltaje)
+//  SENSOR_DIGITAL : JS40F, E18-D80NK, etc. en GPIO32 (salida 5 V -> divisor)
+//  SENSOR_VL53L0X : ToF láser I2C (0x29), mismo bus que el OLED (21/22)
+//  SENSOR_VL53L1X : ToF láser I2C (0x29), más alcance y más inmune a la luz
+//  Librerías ToF: "VL53L0X" y "VL53L1X" de Pololu (solo la que se use)
 // ---------------------------------------------------------------------
-#define PIN_IR_OPONENTE    32
-#define IR_ANALOGICO       true   // confirmado: Sharp GP2Y0A21
-#define UMBRAL_IR          1400   // analógico: lectura mayor => oponente
+#define SENSOR_SHARP       1
+#define SENSOR_DIGITAL     2
+#define SENSOR_VL53L0X     3
+#define SENSOR_VL53L1X     4
+#define SENSOR_OPONENTE    SENSOR_SHARP
+
+#define PIN_IR_OPONENTE    32     // Sharp o digital
+#define UMBRAL_IR          1400   // Sharp: lectura mayor => oponente (≈25-30 cm)
 #define IR_ACTIVO_BAJO     true   // digital: LOW => oponente
+#define DISTANCIA_ATAQUE_MM 400   // ToF: más cerca que esto => oponente
+                                  // (el dohyo mide 77 cm de diámetro)
+
+// Filtro del oponente (no depender de cómo sea el rival):
+// - debe verse sin interrupción este tiempo para atacar (filtra interferencia)
+// - al perderlo se sigue empujando este tiempo (rivales negros/mate que
+//   el sensor ve a ratos)
+#define T_CONFIRMA_OPONENTE_MS 25
+#define T_MEMORIA_OPONENTE_MS  200
 
 // ---------------------------------------------------------------------
 //  Batería LiPo 2S (divisor de voltaje -> GPIO33)
@@ -103,6 +128,10 @@
 #define T_RETROCESO_MS     250
 #define T_GIRO_ESCAPE_MS   300
 #define T_CAMBIO_BUSQUEDA  2500   // cambia el sentido de giro al buscar
+// Si no ve a nadie en este tiempo, patrulla avanzando en arco: el rival puede
+// ser invisible para el sensor (negro mate, muy bajo) o estar quieto lejos.
+#define T_SIN_OPONENTE_MS  4000
+#define T_PATRULLA_MS      600
 
 // Prueba en conjunto: misma lógica que combate, pero más lento
 #define FACTOR_VEL_PRUEBA  0.5f

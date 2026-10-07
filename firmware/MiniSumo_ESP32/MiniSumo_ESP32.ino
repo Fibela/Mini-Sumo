@@ -12,10 +12,19 @@
 #include "esp_arduino_version.h"
 #include "config.h"
 
+#define ES_TOF (SENSOR_OPONENTE == SENSOR_VL53L0X || SENSOR_OPONENTE == SENSOR_VL53L1X)
+#if SENSOR_OPONENTE == SENSOR_VL53L0X
+#include <VL53L0X.h>
+VL53L0X tof;
+#elif SENSOR_OPONENTE == SENSOR_VL53L1X
+#include <VL53L1X.h>
+VL53L1X tof;
+#endif
+
 enum Lado { IZQ, DER };
 enum SensorLinea { DEL_IZQ, DEL_DER, TRA_IZQ, TRA_DER, N_LINEA };
 enum Pulso { NINGUNO, CORTO, LARGO };
-enum Estado { BUSCAR, ATACAR, ESCAPE_ATRAS, ESCAPE_GIRO, ESCAPE_ADELANTE };
+enum Estado { BUSCAR, ATACAR, ESCAPE_ATRAS, ESCAPE_GIRO, ESCAPE_ADELANTE, PATRULLAR };
 
 const uint8_t pinesLinea[N_LINEA] = {
   PIN_LINEA_DEL_IZQ, PIN_LINEA_DEL_DER, PIN_LINEA_TRA_IZQ, PIN_LINEA_TRA_DER
@@ -27,6 +36,8 @@ int umbralLinea[N_LINEA];
 Preferences prefs;
 Adafruit_SSD1306 oled(128, 64, &Wire, -1);
 bool hayPantalla = false;
+bool hayToF = false;
+uint16_t distanciaMM = 0;   // última distancia válida del ToF (0 = nada en rango)
 
 #define BLANCO SSD1306_WHITE
 #define NEGRO  SSD1306_BLACK
@@ -89,8 +100,12 @@ void parar() { mover(0, 0); }
 // =====================================================================
 int leerLineaCruda(uint8_t i) {
   long suma = 0;
+#if LINEA_DIGITAL
+  return digitalRead(pinesLinea[i]) ? 4095 : 0;
+#else
   for (uint8_t k = 0; k < 4; k++) suma += analogRead(pinesLinea[i]);
   return suma / 4;
+#endif
 }
 
 bool esBlanco(uint8_t i) {
@@ -98,19 +113,66 @@ bool esBlanco(uint8_t i) {
   return BLANCO_ES_BAJO ? (v < umbralLinea[i]) : (v > umbralLinea[i]);
 }
 
-int leerIRCrudo() {
-#if IR_ANALOGICO
-  return analogRead(PIN_IR_OPONENTE);
-#else
-  return digitalRead(PIN_IR_OPONENTE);
+// ToF: arranca la medición continua (cada 20 ms). Requiere Wire ya iniciado.
+void oponenteInit() {
+#if SENSOR_OPONENTE == SENSOR_DIGITAL
+  pinMode(PIN_IR_OPONENTE, INPUT);
+#elif SENSOR_OPONENTE == SENSOR_VL53L0X
+  tof.setTimeout(50);
+  hayToF = tof.init();
+  if (hayToF) {
+    tof.setMeasurementTimingBudget(20000);
+    tof.startContinuous();
+  }
+#elif SENSOR_OPONENTE == SENSOR_VL53L1X
+  tof.setTimeout(50);
+  hayToF = tof.init();
+  if (hayToF) {
+    tof.setDistanceMode(VL53L1X::Short);
+    tof.setMeasurementTimingBudget(20000);
+    tof.startContinuous(20);
+  }
+#endif
+#if ES_TOF
+  if (!hayToF) Serial.println("AVISO: no se encontro el sensor ToF (I2C 0x29). Revisa SDA=21, SCL=22.");
 #endif
 }
 
-bool hayOponente() {
-#if IR_ANALOGICO
-  return leerIRCrudo() > UMBRAL_IR;
+// Lee el ToF solo si hay un dato nuevo: nunca bloquea el bucle de pelea.
+void actualizarToF() {
+#if SENSOR_OPONENTE == SENSOR_VL53L0X
+  if (!hayToF) return;
+  if ((tof.readReg(VL53L0X::RESULT_INTERRUPT_STATUS) & 0x07) == 0) return;
+  uint16_t mm = tof.readRangeContinuousMillimeters();
+  distanciaMM = (tof.timeoutOccurred() || mm >= 8000) ? 0 : mm;
+#elif SENSOR_OPONENTE == SENSOR_VL53L1X
+  if (!hayToF || !tof.dataReady()) return;
+  tof.read(false);
+  distanciaMM = (tof.ranging_data.range_status == VL53L1X::RangeValid) ? tof.ranging_data.range_mm : 0;
+#endif
+}
+
+// Sharp: 0-4095 · digital: 0/1 · ToF: milímetros (0 = nada en rango)
+int leerIRCrudo() {
+#if SENSOR_OPONENTE == SENSOR_SHARP
+  return analogRead(PIN_IR_OPONENTE);
+#elif SENSOR_OPONENTE == SENSOR_DIGITAL
+  return digitalRead(PIN_IR_OPONENTE);
 #else
+  actualizarToF();
+  return distanciaMM;
+#endif
+}
+
+// Lectura instantánea, sin filtrar
+bool hayOponente() {
+#if SENSOR_OPONENTE == SENSOR_SHARP
+  return leerIRCrudo() > UMBRAL_IR;
+#elif SENSOR_OPONENTE == SENSOR_DIGITAL
   return IR_ACTIVO_BAJO ? (leerIRCrudo() == LOW) : (leerIRCrudo() == HIGH);
+#else
+  int mm = leerIRCrudo();
+  return mm > 0 && mm < DISTANCIA_ATAQUE_MM;
 #endif
 }
 
@@ -398,29 +460,50 @@ void pruebaLinea() {
 }
 
 void pruebaIR() {
-  Serial.println("\n[Sensor IR] Acerca y aleja un objeto al frente. Tecla o BOOT para salir.");
+  Serial.println("\n[Sensor oponente] Acerca y aleja un objeto al frente. Tecla o BOOT para salir.");
+#if ES_TOF
+  const int escalaMax = 1000;           // barra de 0 a 1000 mm
+  const int umbral = DISTANCIA_ATAQUE_MM;
+  const char* unidad = " mm";
+#else
+  const int escalaMax = 4095;
+  const int umbral = UMBRAL_IR;
+  const char* unidad = "";
+#endif
   while (!abortar()) {
     int lectura = leerIRCrudo();
     bool ve = hayOponente();
     digitalWrite(PIN_LED, ve);
-    Serial.printf("  lectura: %4d   %s\n", lectura, ve ? "<<< OPONENTE >>>" : "-");
+    Serial.printf("  lectura: %4d%s   %s\n", lectura, unidad, ve ? "<<< OPONENTE >>>" : "-");
 
     if (hayPantalla) {
-      encabezado("SENSOR IR");
-      char buf[8];
+      encabezado("OPONENTE");
+      char buf[12];
+#if ES_TOF
+      if (!hayToF)          snprintf(buf, sizeof(buf), "SIN ToF");
+      else if (lectura == 0) snprintf(buf, sizeof(buf), "---");
+      else                  snprintf(buf, sizeof(buf), "%dmm", lectura);
+      // ToF: barra llena = cerca
+      int nivel = lectura == 0 ? 0 : escalaMax - constrain(lectura, 0, escalaMax);
+      int marca = map(escalaMax - umbral, 0, escalaMax, 0, 126);
+#elif SENSOR_OPONENTE == SENSOR_DIGITAL
+      snprintf(buf, sizeof(buf), "%s", ve ? "SI" : "NO");
+      int nivel = ve ? escalaMax : 0;
+      int marca = 63;
+#else
       snprintf(buf, sizeof(buf), "%d", lectura);
+      int nivel = constrain(lectura, 0, escalaMax);
+      int marca = map(umbral, 0, escalaMax, 0, 126);
+#endif
       textoCentrado(buf, 2, 14);
-      // barra de 0 a 4095 con marca del umbral
-      int ancho = map(constrain(lectura, 0, 4095), 0, 4095, 0, 126);
-      int marca = map(UMBRAL_IR, 0, 4095, 0, 126);
       oled.drawRect(0, 34, 128, 8, BLANCO);
-      oled.fillRect(1, 35, ancho, 6, BLANCO);
+      oled.fillRect(1, 35, map(nivel, 0, escalaMax, 0, 126), 6, BLANCO);
       oled.drawFastVLine(1 + marca, 31, 14, BLANCO);
-      if (ve) textoCentrado("OPONENTE!", 1, 46);
+      if (ve) textoCentrado("OPONENTE!", 1, 45);
       pie("BOOT: salir");
       oled.display();
     }
-    delay(120);
+    delay(ES_TOF ? 30 : 120);
   }
   digitalWrite(PIN_LED, LOW);
 }
@@ -472,8 +555,8 @@ void calibrarLinea() {
 // =====================================================================
 //  Lógica de pelea (usada por la prueba en conjunto y por combate)
 // =====================================================================
-const char* nombresEstado[] = { "BUSCAR", "ATACAR", "ESCAPE_ATRAS", "ESCAPE_GIRO", "ESCAPE_ADELANTE" };
-const char* nombresCortos[] = { "BUSCAR", "ATACAR", "ATRAS", "GIRO", "AVANZA" };
+const char* nombresEstado[] = { "BUSCAR", "ATACAR", "ESCAPE_ATRAS", "ESCAPE_GIRO", "ESCAPE_ADELANTE", "PATRULLAR" };
+const char* nombresCortos[] = { "BUSCAR", "ATACAR", "ATRAS", "GIRO", "AVANZA", "RONDA" };
 
 void pantallaPelea(const char* titulo, Estado estado, bool linea[N_LINEA], bool oponente, uint32_t ms) {
   if (!hayPantalla) return;
@@ -528,25 +611,43 @@ void pelea(float factor, uint32_t esperaInicio, bool actualizarPantalla) {
     oled.display();
   }
 
-  Estado estado = BUSCAR, anterior = ESCAPE_ADELANTE;
+  Estado estado = BUSCAR, anterior = PATRULLAR;
   uint32_t inicio = millis(), tEstado = inicio, tBusqueda = inicio, tPantalla = 0;
+  uint32_t tVistoDesde = 0;          // desde cuándo lo ve sin interrupción (0 = no lo ve)
+  uint32_t tUltimoConfirmado = 0;    // última vez que el oponente estaba confirmado
+  uint32_t tUltimoContacto = inicio; // para decidir cuándo patrullar
+  uint8_t rachaBlanco[N_LINEA] = { 0 };
   int sentidoBusqueda = 1;   // 1 = gira a la derecha, -1 = izquierda
   int sentidoEscape = 1;
 
   while (!abortar()) {
-    bool linea[N_LINEA];
-    for (uint8_t i = 0; i < N_LINEA; i++) linea[i] = esBlanco(i);
-    bool di = linea[DEL_IZQ], dd = linea[DEL_DER], ti = linea[TRA_IZQ], td = linea[TRA_DER];
-    bool oponente = hayOponente();
     uint32_t ahora = millis();
+
+    // Línea filtrada: "blanco" solo si se repite CONFIRMA_LINEA veces seguidas
+    bool linea[N_LINEA];
+    for (uint8_t i = 0; i < N_LINEA; i++) {
+      rachaBlanco[i] = esBlanco(i) ? min(rachaBlanco[i] + 1, 255) : 0;
+      linea[i] = rachaBlanco[i] >= CONFIRMA_LINEA;
+    }
+    bool di = linea[DEL_IZQ], dd = linea[DEL_DER], ti = linea[TRA_IZQ], td = linea[TRA_DER];
+
+    // Oponente filtrado: confirmado tras T_CONFIRMA y recordado T_MEMORIA
+    if (hayOponente()) {
+      if (tVistoDesde == 0) tVistoDesde = ahora;
+      if (ahora - tVistoDesde >= T_CONFIRMA_OPONENTE_MS) tUltimoConfirmado = ahora;
+    } else {
+      tVistoDesde = 0;
+    }
+    bool oponente = tUltimoConfirmado != 0 && ahora - tUltimoConfirmado < T_MEMORIA_OPONENTE_MS;
+    if (oponente) tUltimoContacto = ahora;
 
     // 1) Prioridad máxima: no salir del dohyo
     if ((di || dd) && estado != ESCAPE_ATRAS && estado != ESCAPE_GIRO) {
       // borde a la izquierda -> girar a la derecha y viceversa
       sentidoEscape = (di && !dd) ? 1 : (dd && !di) ? -1 : sentidoBusqueda;
-      estado = ESCAPE_ATRAS; tEstado = ahora;
+      estado = ESCAPE_ATRAS; tEstado = ahora; tUltimoContacto = ahora;
     } else if ((ti || td) && estado != ESCAPE_ADELANTE) {
-      estado = ESCAPE_ADELANTE; tEstado = ahora;
+      estado = ESCAPE_ADELANTE; tEstado = ahora; tUltimoContacto = ahora;
     }
 
     // 2) Ejecutar estado
@@ -566,11 +667,22 @@ void pelea(float factor, uint32_t esperaInicio, bool actualizarPantalla) {
         if (ahora - tEstado > T_RETROCESO_MS) { estado = BUSCAR; tEstado = ahora; }
         break;
 
+      case PATRULLAR:
+        // avanza en arco para cambiar de posición y buscar desde otro ángulo
+        mover(v(VEL_BUSQUEDA), v(VEL_BUSQUEDA) * 2 / 3);
+        if (oponente) { estado = ATACAR; tEstado = ahora; }
+        else if (ahora - tEstado > T_PATRULLA_MS) {
+          estado = BUSCAR; tEstado = ahora; tUltimoContacto = ahora;
+        }
+        break;
+
       case BUSCAR:
       case ATACAR:
         if (oponente) {
           estado = ATACAR;
           mover(v(VEL_ATAQUE), v(VEL_ATAQUE));
+        } else if (ahora - tUltimoContacto > T_SIN_OPONENTE_MS) {
+          estado = PATRULLAR; tEstado = ahora;
         } else {
           estado = BUSCAR;
           if (ahora - tBusqueda > T_CAMBIO_BUSQUEDA) { sentidoBusqueda = -sentidoBusqueda; tBusqueda = ahora; }
@@ -651,7 +763,7 @@ const char* opcionesMenu[] = {
   "Motor derecho",
   "Movimientos",
   "Sensores de linea",
-  "Sensor IR",
+  "Sensor oponente",
   "Calibrar linea",
   "Bateria",
 };
@@ -729,14 +841,15 @@ void setup() {
   Serial.begin(115200);
   pinMode(PIN_BOTON, INPUT_PULLUP);
   pinMode(PIN_LED, OUTPUT);
-#if !IR_ANALOGICO
-  pinMode(PIN_IR_OPONENTE, INPUT);
-#endif
   analogReadResolution(12);
+#if LINEA_DIGITAL
+  for (uint8_t i = 0; i < N_LINEA; i++) pinMode(pinesLinea[i], INPUT);
+#endif
   motoresInit();
   parar();
   cargarUmbrales();
   pantallaInit();
+  oponenteInit();
   pantallaInicio();
   delay(1200);
   mostrarMenuSerial();
