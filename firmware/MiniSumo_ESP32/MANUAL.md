@@ -3,7 +3,19 @@
 Manual de uso, conceptos y registros del firmware `MiniSumo_ESP32`.
 Para cargar el código, ve al [README](README.md).
 
-**Hardware (planos Rev B, tracción trasera):** ESP32 DevKit V1 · puente H L298N · 2 motores N20 en el eje trasero (uno por lado) · patines de deslizamiento al frente · 4 sensores de línea (2 delanteros, 2 traseros) · 1 sensor de oponente al frente · OLED 0.96" SSD1306 I2C · LiPo 2S 850 mAh · divisor de batería 10 kΩ / 4.7 kΩ.
+**Hardware real (cotización del 12/10/2026, planos Rev. B, tracción trasera):** ESP32 DevKit V1 · driver **TB6612FNG** · 2 micromotorreductores **Pololu 50:1 590 RPM** en el eje trasero · patines de deslizamiento al frente · 4 sensores de línea **QRE1113 analógicos** · **5 sensores ToF VL53L1X** en abanico frontal · sensor de corriente **INA219** · batería **18650 2S 7.4 V 2550 mAh** · convertidor buck a 5 V *(pendiente de comprar)* · OLED 0.96" SSD1306 **opcional**.
+
+> **Nota de actualización.** Este manual se escribió con L298N, LiPo 2S de 850 mAh y un solo
+> sensor de oponente. El hardware comprado es el de arriba. Las secciones de pines y
+> alimentación de más abajo corresponden al montaje anterior y se están migrando.
+> La referencia vigente está en:
+> - [`docs/componentes.md`](../../docs/componentes.md) — qué es cada componente, para qué sirve y cómo se conecta
+> - [`docs/conexiones.md`](../../docs/conexiones.md) — asignación de pines para ESP32 y para Raspberry Pi Pico
+> - [`Mini-Sumo/lista-materiales.md`](../../Mini-Sumo/lista-materiales.md) — lo que realmente se compró
+
+**Dos rutas de microcontrolador.** El proyecto mantiene ESP32 y Raspberry Pi Pico. El ESP32
+tiene 8 canales analógicos en ADC1, así que los cuatro sensores de línea entran directo; el
+Pico solo tiene 3 y necesita un multiplexor CD4051 o unir los dos traseros en paralelo.
 
 **Sensores intercambiables:** el código no depende de un modelo concreto. En `config.h` se elige el sensor de oponente (Sharp GP2Y0A21, digital, VL53L0X o VL53L1X) y el tipo de sensor de línea (analógico o digital). Así el robot se adapta a lo que haya disponible el día de la competencia.
 
