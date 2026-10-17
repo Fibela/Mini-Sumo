@@ -11,7 +11,7 @@ Para cargar el código, ve al [README](README.md).
 > La referencia vigente está en:
 > - [`docs/componentes.md`](../../docs/componentes.md) — qué es cada componente, para qué sirve y cómo se conecta
 > - [`docs/conexiones.md`](../../docs/conexiones.md) — asignación de pines para ESP32 y para Raspberry Pi Pico
-> - [`Mini-Sumo/lista-materiales.md`](../../Mini-Sumo/lista-materiales.md) — lo que realmente se compró
+> - [`docs/lista-materiales.md`](../../docs/lista-materiales.md) — lo que realmente se compró
 
 **Dos rutas de microcontrolador.** El proyecto mantiene ESP32 y Raspberry Pi Pico. El ESP32
 tiene 8 canales analógicos en ADC1, así que los cuatro sensores de línea entran directo; el

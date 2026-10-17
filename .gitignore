@@ -1,0 +1,36 @@
+# ---- SolidWorks ----
+# Archivos de bloqueo y respaldo que genera al abrir una pieza
+~$*
+*.bak
+*.sldbak
+*.SLDLFP.bak
+swxJRNL.*
+*.swp.bak
+
+# Copias automáticas de seguridad
+"Backup of *"
+*~
+
+# ---- Arduino / PlatformIO ----
+.pio/
+build/
+*.elf
+*.hex
+*.bin
+
+# ---- Python (scripts de CadQuery) ----
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# ---- Laminadores ----
+# Los .gcode se regeneran en cada impresión y pesan mucho.
+# Los .3mf y .stl laminados sí se versionan, en cad/impresion/
+*.gcode
+*.gco
+
+# ---- Sistema ----
+Thumbs.db
+desktop.ini
+.DS_Store
